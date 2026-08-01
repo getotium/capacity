@@ -8,11 +8,9 @@ import (
 )
 
 // MultiCloudProvider presents providers from several clouds (each typically a
-// MultiRegionProvider for one cloud) as a single Provider, so the provisioner shops the
-// COMBINED inventory of every cloud at once and the score picks the cheapest offer anywhere
-// — the core of Otium's cross-cloud arbitrage: when AWS spot for a GPU is dry or dear, a GCP
-// or Azure offer for the same model wins on absolute price and gets launched instead. Which
-// clouds exist is data, wired in at construction, never compiled in.
+// MultiRegionProvider for one cloud) as a single Provider, so a caller can Quote the combined
+// inventory of every configured cloud at once and pick among the offers itself. Which clouds
+// exist is data, wired in at construction, never compiled in.
 //
 // Routing is by provider name: Quote fans out and concatenates (each sub-provider's offers
 // already carry their own Provider); Launch routes on the offer's Provider; Terminate on the

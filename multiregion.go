@@ -8,10 +8,9 @@ import (
 )
 
 // MultiRegionProvider presents a set of per-region Providers (one client per region) as a
-// single Provider, so the provisioner can shop capacity across every enabled region and let
-// the score pick the cheapest — the core of Otium's cross-region arbitrage. It is
-// region-agnostic: which regions exist is data (the operator's provision-enabled set),
-// wired in at construction, never compiled in.
+// single Provider, so a caller can Quote capacity across every configured region and pick
+// among the offers itself. It is region-agnostic: which regions exist is data, wired in at
+// construction, never compiled in.
 //
 // Routing is by region: Quote fans out and tags nothing (each sub-provider's offers already
 // carry their Region); Launch/Terminate route on the offer/handle Region; ListOwned
