@@ -24,8 +24,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
+	"github.com/getotium/awsx"
 	"github.com/getotium/capacity"
-	"github.com/getotium/capacity/awsx"
 )
 
 const (

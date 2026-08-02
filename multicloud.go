@@ -127,6 +127,30 @@ func (m *MultiCloudProvider) ListOwned(ctx context.Context) ([]OwnedInstance, er
 	return all, nil
 }
 
+// AuditInstances implements InstanceAuditor by fanning the account-wide scan across every cloud.
+// A sub-provider that doesn't implement InstanceAuditor is skipped (that cloud contributes
+// nothing rather than failing the sweep); Provider is stamped so a leak is attributable.
+func (m *MultiCloudProvider) AuditInstances(ctx context.Context) ([]AuditedInstance, error) {
+	var all []AuditedInstance
+	for _, name := range m.Providers() {
+		auditor, ok := m.providers[name].(InstanceAuditor)
+		if !ok {
+			continue
+		}
+		got, err := auditor.AuditInstances(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("audit %s: %w", name, err)
+		}
+		for i := range got {
+			if got[i].Provider == "" {
+				got[i].Provider = name
+			}
+			all = append(all, got[i])
+		}
+	}
+	return all, nil
+}
+
 // providerFor resolves the sub-provider by name. With exactly one cloud an empty/unknown name
 // falls back to the sole provider (single-cloud wiring and tests that don't stamp a provider
 // still work); otherwise the name must match one that was registered.

@@ -117,6 +117,30 @@ func (m *MultiRegionProvider) ListOwned(ctx context.Context) ([]OwnedInstance, e
 	return all, nil
 }
 
+// AuditInstances implements InstanceAuditor by fanning the account-wide scan across every
+// region's provider. A region provider that doesn't implement InstanceAuditor contributes
+// nothing rather than failing the whole sweep (the auditor is best-effort visibility).
+func (m *MultiRegionProvider) AuditInstances(ctx context.Context) ([]AuditedInstance, error) {
+	var all []AuditedInstance
+	for _, region := range m.Regions() {
+		auditor, ok := m.providers[region].(InstanceAuditor)
+		if !ok {
+			continue
+		}
+		got, err := auditor.AuditInstances(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("audit %s: %w", region, err)
+		}
+		for i := range got {
+			if got[i].Region == "" {
+				got[i].Region = region
+			}
+			all = append(all, got[i])
+		}
+	}
+	return all, nil
+}
+
 // providerFor resolves the provider for a region. With exactly one region an empty/unknown
 // region falls back to the sole provider (single-region deployments and tests that don't
 // stamp a region still work); otherwise the region must match.

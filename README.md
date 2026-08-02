@@ -29,6 +29,12 @@ a state loss.
   operator on/off switch), `multiregion`, and `multicloud` (fan `Quote` across several providers).
 - **`capacity/aws`** — a working **AWS EC2 Spot** provider: quotes spot offers, launches tagged
   instances, terminates, and lists owned instances by tag.
+- **`InstanceAuditor`** — a small **optional** capability, separate from `Provider`: list *every*
+  running instance in the account, owned or not. `ListOwned` only sees what you tagged, so it can
+  never surface a leak from outside the system (an untagged image builder, a box someone forgot);
+  an account-wide sweep can. Implemented by the AWS provider, and fanned across every region/cloud
+  by `multiregion`/`multicloud` — providers that don't implement it are skipped rather than
+  failing the sweep.
 - **Conformance suite** — `capacity.RunConformance(t, newProvider, …)` exercises any implementation
   against the contract, so "I added a provider" means "I added a *conformant* provider."
 
