@@ -57,7 +57,7 @@ func TestMyProvider(t *testing.T) {
 
 ## Provenance
 
-Extracted from [Otium](https://getotium.com), where it's the boundary between the scheduler and the
+Extracted from [Otium](https://getotium.ai), where it's the boundary between the scheduler and the
 compute it runs on. The interface is open precisely so anyone can contribute capacity; the tuned
 *placement/pricing strategy* that decides which offer to take stays in Otium.
 
