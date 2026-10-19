@@ -1,5 +1,6 @@
-// Package aws implements capacity.Provider for AWS EC2 Spot instances. It is the
-// first real provider; the Fake in the parent package backs tests and local runs.
+// Package aws implements capacity.Provider for AWS EC2 Spot instances, and optionally
+// on-demand ones (SpotProviderOptions.OnDemandPrice). It is the first real provider; the
+// Fake in the parent package backs tests and local runs.
 //
 // Credentials come exclusively from the AWS default credential chain (SSO profile
 // in local dev, instance role in production) — never from Otium configuration.
@@ -111,7 +112,17 @@ type SpotProviderOptions struct {
 	SecurityGroupIDs []string
 	// Logger defaults to slog.Default.
 	Logger *slog.Logger
+	// OnDemandPrice, when set, makes Quote offer on-demand capacity too: one on-demand offer
+	// beside each spot offer, at this hourly price, and Launch starts an on-demand instance for
+	// one. Nil quotes spot only. EC2 has no live on-demand price feed (the Price List API is
+	// slow, rate-limited and global), so the caller supplies the price from wherever it already
+	// keeps it.
+	OnDemandPrice OnDemandPricer
 }
+
+// OnDemandPricer returns the hourly Linux on-demand price of an instance type in a region;
+// ok=false when it is not known, and that type then gets no on-demand offer.
+type OnDemandPricer func(ctx context.Context, region, instanceType string) (price float64, ok bool)
 
 var _ capacity.Provider = (*SpotProvider)(nil)
 
@@ -139,7 +150,14 @@ func (p *SpotProvider) Name() string { return providerName }
 
 // Quote implements capacity.Provider. It calls DescribeSpotPriceHistory to return
 // the current spot price for each requested instance type in each AZ, filtered to
-// Linux/UNIX workloads. One offer is returned per instance-type/AZ pair.
+// Linux/UNIX workloads. One offer is returned per instance-type/AZ pair, plus, with
+// OnDemandPrice set, an on-demand offer for the same pair.
+//
+// On-demand is priced per region, but each offer still names a zone: the zone is where Launch
+// looks for the worker subnet, and it lets a caller set aside one zone that has no capacity
+// without giving up on the type. The spot history is the list of zones that sell the type.
+// An on-demand offer keeps this provider's Name, so a router that dispatches on
+// Offer.Provider still reaches this provider; Kind is what tells the two apart.
 func (p *SpotProvider) Quote(ctx context.Context, req capacity.Requirement) ([]capacity.Offer, error) {
 	types := toEC2InstanceTypes(req.InstanceTypes)
 	if len(types) == 0 && len(req.InstanceTypes) > 0 {
@@ -185,11 +203,40 @@ func (p *SpotProvider) Quote(ctx context.Context, req capacity.Requirement) ([]c
 			Currency:     "USD",
 		})
 	}
-	return offers, nil
+	return append(offers, p.onDemandOffers(ctx, offers)...), nil
 }
 
-// Launch implements capacity.Provider. It calls RunInstances with a spot market
-// request under the caller-supplied worker id (as ClientToken for idempotency and as an
+// onDemandOffers returns an on-demand offer beside each spot offer whose type has a known
+// on-demand price, or nothing when OnDemandPrice is unset. Each type is priced once per call.
+func (p *SpotProvider) onDemandOffers(ctx context.Context, spot []capacity.Offer) []capacity.Offer {
+	if p.opts.OnDemandPrice == nil {
+		return nil
+	}
+	type priced struct {
+		price float64
+		ok    bool
+	}
+	prices := make(map[string]priced)
+	var out []capacity.Offer
+	for _, o := range spot {
+		pr, seen := prices[o.InstanceType]
+		if !seen {
+			pr.price, pr.ok = p.opts.OnDemandPrice(ctx, p.region, o.InstanceType)
+			pr.ok = pr.ok && pr.price > 0
+			prices[o.InstanceType] = pr
+		}
+		if !pr.ok {
+			continue
+		}
+		o.Kind = capacity.KindOnDemand
+		o.PricePerHour = pr.price
+		out = append(out, o)
+	}
+	return out
+}
+
+// Launch implements capacity.Provider. It calls RunInstances (a spot market request unless the
+// offer is on-demand) under the caller-supplied worker id (as ClientToken for idempotency and as an
 // ownership tag) and returns a WorkerHandle carrying the EC2 instance ID.
 func (p *SpotProvider) Launch(ctx context.Context, id string, offer capacity.Offer, spec capacity.WorkerSpec) (capacity.WorkerHandle, error) {
 	// Resolve the launch image: an explicit id (OTIUM_WORKER_IMAGE) wins; otherwise find the
@@ -215,9 +262,6 @@ func (p *SpotProvider) Launch(ctx context.Context, id string, offer capacity.Off
 		// ClientToken makes RunInstances idempotent: a retry with the same worker id will
 		// not launch a second instance.
 		ClientToken: aws.String(id),
-		InstanceMarketOptions: &ec2types.InstanceMarketOptionsRequest{
-			MarketType: ec2types.MarketTypeSpot,
-		},
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeInstance,
 			Tags: []ec2types.Tag{
@@ -228,6 +272,11 @@ func (p *SpotProvider) Launch(ctx context.Context, id string, offer capacity.Off
 				{Key: aws.String(tagOwned), Value: aws.String("true")},
 			},
 		}},
+	}
+	if offer.Kind != capacity.KindOnDemand {
+		input.InstanceMarketOptions = &ec2types.InstanceMarketOptionsRequest{
+			MarketType: ec2types.MarketTypeSpot,
+		}
 	}
 	if spec.UserData != "" {
 		input.UserData = aws.String(spec.UserData)
@@ -266,7 +315,11 @@ func (p *SpotProvider) Launch(ctx context.Context, id string, offer capacity.Off
 	}
 
 	instanceID := aws.ToString(out.Instances[0].InstanceId)
-	p.log.InfoContext(ctx, "capacity/aws: launched spot instance",
+	market := "spot"
+	if offer.Kind == capacity.KindOnDemand {
+		market = "on-demand"
+	}
+	p.log.InfoContext(ctx, "capacity/aws: launched "+market+" instance",
 		"worker", id, "instance", instanceID,
 		"model", spec.Model, "instance_type", offer.InstanceType,
 		"zone", offer.Zone, "price_per_hour", offer.PricePerHour)

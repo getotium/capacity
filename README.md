@@ -28,7 +28,8 @@ a state loss.
   `WorkerHandle`), a `fake` provider for tests, and composable wrappers: `gated` (respect an
   operator on/off switch), `multiregion`, and `multicloud` (fan `Quote` across several providers).
 - **`capacity/aws`** — a working **AWS EC2 Spot** provider: quotes spot offers, launches tagged
-  instances, terminates, and lists owned instances by tag.
+  instances, terminates, and lists owned instances by tag. Give it an `OnDemandPrice` lookup and
+  it quotes and launches on-demand capacity too, so a scheduler can weigh both on price.
 - **`InstanceAuditor`** — a small **optional** capability, separate from `Provider`: list *every*
   running instance in the account, owned or not. `ListOwned` only sees what you tagged, so it can
   never surface a leak from outside the system (an untagged image builder, a box someone forgot);

@@ -46,6 +46,8 @@ type fakeEC2 struct {
 	// types the last one asked for, so tests can assert foreign (non-EC2) names never reach AWS.
 	spotCalls     int
 	lastSpotTypes []string
+	// lastMarket is the last RunInstances' market options: nil launches on-demand.
+	lastMarket *ec2types.InstanceMarketOptionsRequest
 }
 
 func (f *fakeEC2) DescribeSubnets(_ context.Context, in *ec2.DescribeSubnetsInput, _ ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
@@ -97,6 +99,7 @@ func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ .
 	}
 	f.lastSubnetID = aws.ToString(in.SubnetId)
 	f.lastSGIDs = in.SecurityGroupIds
+	f.lastMarket = in.InstanceMarketOptions
 	f.seq++
 	id := fmt.Sprintf("i-fake%04d", f.seq)
 	f.launchedIDs = append(f.launchedIDs, id)
@@ -496,5 +499,94 @@ func TestSpotProvider_Terminate_UnknownHandle(t *testing.T) {
 	err := p.Terminate(context.Background(), capacity.WorkerHandle{ID: "not-tracked"})
 	if err == nil {
 		t.Fatal("expected error for unknown handle, got nil")
+	}
+}
+
+func TestSpotProvider_Quote_OnDemandBesideSpot(t *testing.T) {
+	t.Parallel()
+	f := &fakeEC2{spotHistory: []ec2types.SpotPrice{
+		spotPrice("g6.2xlarge", "us-east-1a", "0.40"),
+		spotPrice("g6.2xlarge", "us-east-1b", "0.45"),
+		spotPrice("g5.2xlarge", "us-east-1a", "0.50"),
+	}}
+	calls := map[string]int{}
+	p := newSpotProvider(f, "us-east-1", SpotProviderOptions{
+		OnDemandPrice: func(_ context.Context, region, it string) (float64, bool) {
+			calls[it]++
+			if region != "us-east-1" {
+				t.Errorf("priced region %q, want the provider's us-east-1", region)
+			}
+			if it == "g6.2xlarge" {
+				return 0.98, true
+			}
+			return 0, false // g5.2xlarge: unknown, so spot only
+		},
+	})
+
+	offers, err := p.Quote(context.Background(), capacity.Requirement{InstanceTypes: []string{"g6.2xlarge", "g5.2xlarge"}})
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+	var onDemand []string
+	spot := 0
+	for _, o := range offers {
+		if o.Provider != providerName {
+			t.Errorf("offer.Provider = %q, want %q so a router still reaches this provider", o.Provider, providerName)
+		}
+		switch o.Kind {
+		case capacity.KindSpot:
+			spot++
+		case capacity.KindOnDemand:
+			if o.PricePerHour != 0.98 {
+				t.Errorf("on-demand %s/%s price = %v, want 0.98", o.InstanceType, o.Zone, o.PricePerHour)
+			}
+			onDemand = append(onDemand, o.InstanceType+"/"+o.Zone)
+		default:
+			t.Errorf("offer.Kind = %q", o.Kind)
+		}
+	}
+	slices.Sort(onDemand)
+	if want := []string{"g6.2xlarge/us-east-1a", "g6.2xlarge/us-east-1b"}; !slices.Equal(onDemand, want) {
+		t.Errorf("on-demand offers = %v, want %v (one per zone spot sells the type in, none for an unpriced type)", onDemand, want)
+	}
+	if spot != 3 {
+		t.Errorf("spot offers = %d, want 3", spot)
+	}
+	if calls["g6.2xlarge"] != 1 || calls["g5.2xlarge"] != 1 {
+		t.Errorf("pricer calls = %v, want one per type", calls)
+	}
+}
+
+func TestSpotProvider_Quote_NoOnDemandWithoutPricer(t *testing.T) {
+	t.Parallel()
+	f := &fakeEC2{spotHistory: []ec2types.SpotPrice{spotPrice("g6.2xlarge", "us-east-1a", "0.40")}}
+	offers, err := newTestProvider(f).Quote(context.Background(), capacity.Requirement{InstanceTypes: []string{"g6.2xlarge"}})
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+	if len(offers) != 1 || offers[0].Kind != capacity.KindSpot {
+		t.Errorf("offers = %+v, want the one spot offer only", offers)
+	}
+}
+
+func TestSpotProvider_Launch_MarketFollowsOfferKind(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		kind     capacity.Kind
+		wantSpot bool
+	}{
+		{capacity.KindSpot, true},
+		{"", true}, // an unset kind is spot, as everywhere else
+		{capacity.KindOnDemand, false},
+	} {
+		f := &fakeEC2{}
+		offer := capacity.Offer{Provider: providerName, InstanceType: "g6.2xlarge", Region: "us-east-1", Zone: "us-east-1a", Kind: tc.kind}
+		if _, err := newTestProvider(f).Launch(context.Background(), "w-"+string(tc.kind), offer, capacity.WorkerSpec{Model: "m", Image: "ami-1"}); err != nil {
+			t.Fatalf("kind %q: Launch: %v", tc.kind, err)
+		}
+		gotSpot := f.lastMarket != nil && f.lastMarket.MarketType == ec2types.MarketTypeSpot
+		if gotSpot != tc.wantSpot {
+			t.Errorf("kind %q: spot market request = %v, want %v", tc.kind, gotSpot, tc.wantSpot)
+		}
 	}
 }
