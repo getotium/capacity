@@ -22,6 +22,7 @@ func TestAuditInstances_MapsOwnedAndUnowned(t *testing.T) {
 			Tags: []ec2types.Tag{
 				{Key: aws.String("otium:owned"), Value: aws.String("true")},
 				{Key: aws.String("Name"), Value: aws.String("otium-worker-x")},
+				{Key: aws.String("otium:role"), Value: aws.String("ami-builder")},
 			},
 		},
 		{
@@ -45,10 +46,10 @@ func TestAuditInstances_MapsOwnedAndUnowned(t *testing.T) {
 		byID[a.InstanceID] = a
 	}
 	o := byID["i-owned"]
-	if !o.Owned || o.Region != "us-east-2" || o.Provider != providerName || o.Name != "otium-worker-x" || !o.LaunchedAt.Equal(launch) {
+	if !o.Owned || o.Region != "us-east-2" || o.Provider != providerName || o.Name != "otium-worker-x" || o.Role != "ami-builder" || !o.LaunchedAt.Equal(launch) {
 		t.Fatalf("i-owned mapped wrong: %+v", o)
 	}
-	if l := byID["i-leak"]; l.Owned {
+	if l := byID["i-leak"]; l.Owned || l.Role != "" {
 		t.Fatalf("i-leak must be Owned=false (no otium:owned tag): %+v", l)
 	}
 }

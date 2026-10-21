@@ -45,6 +45,8 @@ func (p *SpotProvider) AuditInstances(ctx context.Context) ([]capacity.AuditedIn
 						ai.Name = aws.ToString(t.Value)
 					case tagOwned:
 						ai.Owned = aws.ToString(t.Value) == "true"
+					case tagWorker: // otium:role
+						ai.Role = aws.ToString(t.Value)
 					}
 				}
 				out = append(out, ai)

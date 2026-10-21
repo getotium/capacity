@@ -16,6 +16,7 @@ type AuditedInstance struct {
 	InstanceType string    // e.g. "g4dn.xlarge"
 	Name         string    // best-effort human label (Name tag / label); "" if none
 	Owned        bool      // carries Otium's ownership tag/label — i.e. the reaper's domain
+	Role         string    // the otium:role tag/label ("worker", "ami-builder", …); "" if none
 	LaunchedAt   time.Time // when it started; zero if the provider didn't report it
 }
 
