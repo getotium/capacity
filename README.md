@@ -36,6 +36,10 @@ a state loss.
   an account-wide sweep can. Implemented by the AWS provider, and fanned across every region/cloud
   by `multiregion`/`multicloud` — providers that don't implement it are skipped rather than
   failing the sweep.
+- **`ImagePruner`** — another optional capability: list and delete the machine images you baked
+  (AWS: AMIs tagged `otium:ami`) and their snapshots. Images bill for their snapshots in every
+  region they were copied to, forever, so a sweep that keeps only the newest is worth having.
+  Listing is one call per region; already-deleted counts as deleted, so concurrent sweeps are safe.
 - **Conformance suite** — `capacity.RunConformance(t, newProvider, …)` exercises any implementation
   against the contract, so "I added a provider" means "I added a *conformant* provider."
 

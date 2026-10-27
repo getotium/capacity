@@ -48,6 +48,13 @@ type fakeEC2 struct {
 	lastSpotTypes []string
 	// lastMarket is the last RunInstances' market options: nil launches on-demand.
 	lastMarket *ec2types.InstanceMarketOptionsRequest
+
+	// Image pruning stubs (images_test.go).
+	snapshots     []ec2types.Snapshot
+	deregistered  []string
+	deletedSnaps  []string
+	deregErr      error
+	deleteSnapErr map[string]error
 }
 
 func (f *fakeEC2) DescribeSubnets(_ context.Context, in *ec2.DescribeSubnetsInput, _ ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
